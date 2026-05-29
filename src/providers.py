@@ -199,8 +199,8 @@ class FreeProvider(BaseProvider):
         models = [
             # VERIFIED WORKING models from tested providers
             ModelInfo("blackboxai", ProviderType.FREE, "Blackbox AI - reliable free model"),
-            ModelInfo("gpt-3.5-turbo", ProviderType.FREE, "GPT-3.5 via Chatai - tested working"),
-            ModelInfo("gpt-4", ProviderType.FREE, "GPT-4 via Chatai - tested working"),
+            # ModelInfo("gpt-3.5-turbo", ProviderType.FREE, "GPT-3.5 via Chatai - tested working"),
+            # ModelInfo("gpt-4", ProviderType.FREE, "GPT-4 via Chatai - tested working"),
             ModelInfo("command-r-plus", ProviderType.FREE, "Cohere Command R+ - tested working"),
             ModelInfo("command-r", ProviderType.FREE, "Cohere Command R - tested working"),
         ]
