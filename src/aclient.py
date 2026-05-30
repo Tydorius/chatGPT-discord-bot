@@ -156,10 +156,11 @@ class DiscordClient(discord.Client):
             return response
             
         except Exception as e:
-            logger.error(f"Provider error: {e}")
+            from src.log import logger as log_logger
+            log_logger.error(f"Provider error: {e}")
             # Try fallback to free provider
             if self.provider_manager.current_provider != ProviderType.FREE:
-                logger.info("Falling back to free provider")
+                log_logger.info("Falling back to free provider")
                 try:
                     free_provider = self.provider_manager.get_provider(ProviderType.FREE)
                     response = await free_provider.chat_completion(
@@ -169,14 +170,12 @@ class DiscordClient(discord.Client):
                     self.conversation_history.append({'role': 'assistant', 'content': response})
                     return f"{response}\n\n*⚠️ Fallback to free provider due to error*"
                 except Exception as fallback_error:
-                    logger.error(f"Fallback provider also failed: {fallback_error}")
-                    # Return user-friendly error message
-                    error_response = "❌ I'm having trouble processing your request right now. Please try again later or contact an administrator."
+                    log_logger.error(f"Fallback provider also failed: {fallback_error}")
+                    error_response = f"❌ Provider error: {e}\n\nFallback also failed. Please check bot configuration."
                     self.conversation_history.append({'role': 'assistant', 'content': error_response})
                     return error_response
             else:
-                # Already using free provider, return error
-                error_response = "❌ The free provider is currently unavailable. Please try again later."
+                error_response = f"❌ Provider error: {e}"
                 self.conversation_history.append({'role': 'assistant', 'content': error_response})
                 return error_response
     
