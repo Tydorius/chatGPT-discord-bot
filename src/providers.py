@@ -11,6 +11,7 @@ import g4f
 from g4f.client import Client
 from g4f.Provider import RetryProvider
 from openai import AsyncOpenAI
+import httpx
 import google.generativeai as genai
 from anthropic import AsyncAnthropic
 import aiohttp
@@ -225,25 +226,29 @@ class OpenAIProvider(BaseProvider):
     
     def __init__(self, api_key: str, base_url: Optional[str] = None):
         super().__init__(api_key)
-        client_kwargs = {"api_key": api_key}
-        if base_url:
-            client_kwargs["base_url"] = base_url
-        self.client = AsyncOpenAI(**client_kwargs)
         self._base_url = base_url
+        logger.info(f"OpenAIProvider init: base_url={base_url!r}, key_prefix={api_key[:10]}...")
+        self.client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            http_client=httpx.AsyncClient()
+        )
         
     async def chat_completion(self, messages: List[Dict[str, str]], model: str, **kwargs) -> str:
         try:
             if not model or model == "auto":
                 model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-                
+
+            logger.info(f"OpenAI chat_completion: model={model!r}, base_url={self._base_url!r}, messages={len(messages)}")
             response = await self.client.chat.completions.create(
                 model=model,
                 messages=messages,
                 **kwargs
             )
+            logger.info(f"OpenAI response received: {len(response.choices)} choices")
             return response.choices[0].message.content
         except Exception as e:
-            logger.error(f"OpenAI provider error: {e}")
+            logger.exception(f"OpenAI provider error (type={type(e).__name__}): {e}")
             raise
     
     async def generate_image(self, prompt: str, model: Optional[str] = None, **kwargs) -> str:
@@ -473,6 +478,7 @@ class ProviderManager:
         logger.info("Initialized free provider")
         
         openai_base_url = os.getenv("OPENAI_BASE_URL")
+        logger.info(f"OPENAI_BASE_URL env var: {openai_base_url!r}")
         api_configs = [
             ("OPENAI_KEY", ProviderType.OPENAI, OpenAIProvider, None),
             ("CLAUDE_KEY", ProviderType.CLAUDE, ClaudeProvider, r'^sk-ant-[a-zA-Z0-9-]{50,}$'),
