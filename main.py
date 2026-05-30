@@ -40,6 +40,13 @@ def main():
     """Main entry point"""
     logger.info("Starting Discord AI Bot...")
     
+    # Print all relevant env vars for debugging
+    for var in ["OPENAI_BASE_URL", "OPENAI_MODEL", "OPENAI_KEY", "DEFAULT_PROVIDER", "DEFAULT_MODEL"]:
+        val = os.getenv(var, "<not set>")
+        if var.endswith("_KEY") and val and val != "<not set>":
+            val = f"{val[:10]}... (len={len(val)})"
+        logger.info(f"ENV: {var} = {val!r}")
+    
     if not validate_environment():
         return
     
