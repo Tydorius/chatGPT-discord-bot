@@ -48,6 +48,14 @@ def run_discord_bot():
             return
         if interaction.user == discordClient.user:
             return
+
+        # Defer immediately to prevent Discord interaction expiry (3-second window)
+        try:
+            await interaction.response.defer(ephemeral=discordClient.isPrivate)
+        except Exception as e:
+            logger.warning(f"Failed to defer interaction: {e}")
+            return
+
         username = str(interaction.user)
         discordClient.current_channel = interaction.channel
         logger.info(

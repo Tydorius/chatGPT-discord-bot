@@ -79,8 +79,7 @@ class DiscordClient(discord.Client):
             await asyncio.sleep(1)
     
     async def enqueue_message(self, message, user_message):
-        """Add message to processing queue"""
-        await message.response.defer(ephemeral=self.isPrivate) if hasattr(message, 'response') else None
+        """Add message to processing queue (interaction should already be deferred for slash commands)"""
         await self.message_queue.put((message, user_message))
     
     async def send_message(self, message, user_message):

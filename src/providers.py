@@ -221,16 +221,20 @@ class FreeProvider(BaseProvider):
 
 
 class OpenAIProvider(BaseProvider):
-    """Official OpenAI API provider"""
+    """OpenAI-compatible API provider (works with OpenAI, Open WebUI, LiteLLM, etc.)"""
     
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, base_url: Optional[str] = None):
         super().__init__(api_key)
-        self.client = AsyncOpenAI(api_key=api_key)
+        client_kwargs = {"api_key": api_key}
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        self.client = AsyncOpenAI(**client_kwargs)
+        self._base_url = base_url
         
     async def chat_completion(self, messages: List[Dict[str, str]], model: str, **kwargs) -> str:
         try:
-            if not model:
-                model = "gpt-4o-mini"
+            if not model or model == "auto":
+                model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
                 
             response = await self.client.chat.completions.create(
                 model=model,
@@ -257,6 +261,12 @@ class OpenAIProvider(BaseProvider):
             raise
     
     def get_available_models(self) -> List[ModelInfo]:
+        if self._base_url:
+            default_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+            return [ModelInfo(default_model, ProviderType.OPENAI, f"Model: {default_model}")]
+        return self._get_default_models()
+
+    def _get_default_models(self) -> List[ModelInfo]:
         return [
             ModelInfo("gpt-4o", ProviderType.OPENAI, "Most capable GPT-4 model", supports_vision=True),
             ModelInfo("gpt-4o-mini", ProviderType.OPENAI, "Affordable GPT-4 model", supports_vision=True),
@@ -265,9 +275,9 @@ class OpenAIProvider(BaseProvider):
             ModelInfo("dall-e-3", ProviderType.OPENAI, "DALL-E 3 image generation", supports_image_generation=True),
             ModelInfo("dall-e-2", ProviderType.OPENAI, "DALL-E 2 image generation", supports_image_generation=True),
         ]
-    
+
     def supports_image_generation(self) -> bool:
-        return True
+        return not bool(self._base_url)
 
 
 class ClaudeProvider(BaseProvider):
@@ -462,8 +472,9 @@ class ProviderManager:
         self.providers[ProviderType.FREE] = FreeProvider()
         logger.info("Initialized free provider")
         
+        openai_base_url = os.getenv("OPENAI_BASE_URL")
         api_configs = [
-            ("OPENAI_KEY", ProviderType.OPENAI, OpenAIProvider, r'^sk-[a-zA-Z0-9]{20,}$'),
+            ("OPENAI_KEY", ProviderType.OPENAI, OpenAIProvider, None),
             ("CLAUDE_KEY", ProviderType.CLAUDE, ClaudeProvider, r'^sk-ant-[a-zA-Z0-9-]{50,}$'),
             ("GEMINI_KEY", ProviderType.GEMINI, GeminiProvider, r'^[a-zA-Z0-9_-]{20,}$'),
             ("GROK_KEY", ProviderType.GROK, GrokProvider, r'^xai-[a-zA-Z0-9-]{20,}$')
@@ -475,7 +486,10 @@ class ProviderManager:
                 logger.info(f"Found {env_key} with length {len(api_key)}, prefix: {api_key[:10]}...")
                 if self._validate_api_key(api_key, provider_type.value, pattern):
                     try:
-                        self.providers[provider_type] = provider_class(api_key)
+                        if provider_type == ProviderType.OPENAI:
+                            self.providers[provider_type] = OpenAIProvider(api_key, base_url=openai_base_url)
+                        else:
+                            self.providers[provider_type] = provider_class(api_key)
                         logger.info(f"Successfully initialized {provider_type.value} provider")
                     except Exception as e:
                         logger.error(f"Failed to initialize {provider_type.value}: {e}")
