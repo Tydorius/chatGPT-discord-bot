@@ -69,37 +69,43 @@ class FreeProvider(BaseProvider):
     def __init__(self):
         super().__init__()
         
-        # ONLY use providers that work 100% without ANY authentication
-        # These have been tested and verified to work in 2025
-        self.working_providers = [
-            {
-                'provider': g4f.Provider.Blackbox,
-                'models': ['blackboxai'],
-                'name': 'Blackbox'
-            },
-            #{
-            #    'provider': g4f.Provider.Chatai, 
-            #    'models': ['gpt-3.5-turbo', 'gpt-4'],
-            #    'name': 'Chatai'
-            #},
-            {
-                'provider': g4f.Provider.CohereForAI_C4AI_Command,
-                'models': ['command-r-plus', 'command-r'],
-                'name': 'CohereForAI'
-            }
+        # Define provider entries by string name so missing ones can be skipped
+        provider_entries = [
+            ('Blackbox', ['blackboxai'], 'Blackbox'),
+            ('Chatai', ['gpt-3.5-turbo', 'gpt-4'], 'Chatai'),
+            ('CohereForAI_C4AI_Command', ['command-r-plus', 'command-r'], 'CohereForAI'),
         ]
+
+        # Resolve each provider safely; skip any that no longer exist in g4f
+        self.working_providers = []
+        for attr_name, models, display_name in provider_entries:
+            provider_cls = getattr(g4f.Provider, attr_name, None)
+            if provider_cls is not None:
+                self.working_providers.append({
+                    'provider': provider_cls,
+                    'models': models,
+                    'name': display_name,
+                })
+            else:
+                logger.warning(f"Skipping unavailable g4f provider: {attr_name}")
+
+        if not self.working_providers:
+            logger.error("No free providers available - all g4f providers are missing")
         
         # Create provider list for RetryProvider
         providers_list = [p['provider'] for p in self.working_providers]
-        
-        logger.info(f"FreeProvider initialized with {len(providers_list)} VERIFIED working providers")
+
+        logger.info(f"FreeProvider initialized with {len(providers_list)} working providers")
         for provider_info in self.working_providers:
-            logger.info(f"  ✅ {provider_info['name']}: {', '.join(provider_info['models'])}")
-        
+            logger.info(f"  {provider_info['name']}: {', '.join(provider_info['models'])}")
+
         # Initialize with RetryProvider for automatic fallback
-        self.client = Client(
-            provider=RetryProvider(providers_list, shuffle=False)
-        )
+        if providers_list:
+            self.client = Client(
+                provider=RetryProvider(providers_list, shuffle=False)
+            )
+        else:
+            self.client = Client()
         
         # Track current provider for better error handling
         self.current_provider_index = 0
@@ -107,6 +113,9 @@ class FreeProvider(BaseProvider):
     async def chat_completion(self, messages: List[Dict[str, str]], model: str, **kwargs) -> str:
         """Generate chat completion with robust fallback system"""
         
+        if not self.working_providers:
+            raise Exception("No free providers available - all g4f providers are missing")
+
         # Determine the best model to use
         target_model = self._select_model(model)
         
@@ -127,13 +136,13 @@ class FreeProvider(BaseProvider):
                     client.chat.completions.create,
                     model=provider_model,
                     messages=messages,
-                    timeout=30,  # Add timeout
+                    timeout=30,
                     **kwargs
                 )
                 
                 if response and response.choices and response.choices[0].message.content:
                     result = response.choices[0].message.content
-                    logger.info(f"✅ Success with {provider_info['name']} + {provider_model}")
+                    logger.info(f"Success with {provider_info['name']} + {provider_model}")
                     return result
                 else:
                     logger.warning(f"Empty response from {provider_info['name']}")
@@ -141,19 +150,16 @@ class FreeProvider(BaseProvider):
                     
             except Exception as e:
                 error_msg = str(e)
-                logger.warning(f"❌ {provider_info['name']} failed: {error_msg[:100]}...")
+                logger.warning(f"{provider_info['name']} failed: {error_msg[:100]}...")
                 
-                # Don't give up immediately on certain errors
                 if attempt < len(self.working_providers) - 1:
                     continue
         
-        # If all providers fail, raise a meaningful error
         raise Exception("All free providers failed. The service may be temporarily unavailable.")
     
     def _select_model(self, model: Optional[str]) -> str:
         """Select the best available model"""
         if not model or model == "auto":
-            # Default to a widely supported model
             return "gpt-3.5-turbo"
         return model
     
@@ -161,11 +167,9 @@ class FreeProvider(BaseProvider):
         """Get the best model for a specific provider"""
         supported_models = provider_info['models']
         
-        # Try exact match first
         if target_model in supported_models:
             return target_model
         
-        # Smart fallback based on model type
         if 'gpt' in target_model.lower():
             for model in supported_models:
                 if 'gpt' in model.lower():
@@ -173,21 +177,17 @@ class FreeProvider(BaseProvider):
         
         if 'claude' in target_model.lower():
             for model in supported_models:
-                if 'command' in model.lower():  # Cohere is Claude-like
+                if 'command' in model.lower():
                     return model
         
         if 'llama' in target_model.lower() or 'meta' in target_model.lower():
-            # No llama support in current working providers
             return supported_models[0]
         
-        # Default to first available model
         return supported_models[0]
     
     async def generate_image(self, prompt: str, model: Optional[str] = None, **kwargs) -> str:
         """Generate image - simplified implementation"""
         try:
-            # For now, use simple fallback message since image providers are less reliable
-            # Could be enhanced later with working image providers like PollinationsAI
             logger.warning("Image generation via free providers is currently disabled for reliability")
             raise NotImplementedError("Image generation is temporarily unavailable via free providers. Please use a paid provider.")
         except Exception as e:
@@ -195,23 +195,29 @@ class FreeProvider(BaseProvider):
             raise
     
     def get_available_models(self) -> List[ModelInfo]:
-        """Return only VERIFIED working models - no dead models!"""
-        models = [
-            # VERIFIED WORKING models from tested providers
-            ModelInfo("blackboxai", ProviderType.FREE, "Blackbox AI - reliable free model"),
-            # ModelInfo("gpt-3.5-turbo", ProviderType.FREE, "GPT-3.5 via Chatai - tested working"),
-            # ModelInfo("gpt-4", ProviderType.FREE, "GPT-4 via Chatai - tested working"),
-            ModelInfo("command-r-plus", ProviderType.FREE, "Cohere Command R+ - tested working"),
-            ModelInfo("command-r", ProviderType.FREE, "Cohere Command R - tested working"),
-        ]
-        
-        # Note: Removed all dead models like gpt-4o-mini, llama-3.1-70b, claude-3-haiku
-        # These were causing failures. Only include models that actually work.
-        
+        """Return models for providers that loaded successfully"""
+        model_map = {
+            'Blackbox': [
+                ModelInfo("blackboxai", ProviderType.FREE, "Blackbox AI - reliable free model"),
+            ],
+            'Chatai': [
+                ModelInfo("gpt-3.5-turbo", ProviderType.FREE, "GPT-3.5 via Chatai"),
+                ModelInfo("gpt-4", ProviderType.FREE, "GPT-4 via Chatai"),
+            ],
+            'CohereForAI': [
+                ModelInfo("command-r-plus", ProviderType.FREE, "Cohere Command R+"),
+                ModelInfo("command-r", ProviderType.FREE, "Cohere Command R"),
+            ],
+        }
+
+        models = []
+        for provider_info in self.working_providers:
+            models.extend(model_map.get(provider_info['name'], []))
+
         return models
     
     def supports_image_generation(self) -> bool:
-        return False  # Disabled for reliability - only working text providers included
+        return False
 
 
 class OpenAIProvider(BaseProvider):
@@ -276,7 +282,6 @@ class ClaudeProvider(BaseProvider):
             if not model:
                 model = "claude-3-5-haiku-latest"
             
-            # Convert messages format for Claude
             system_message = None
             claude_messages = []
             
@@ -327,13 +332,9 @@ class GeminiProvider(BaseProvider):
             if not model:
                 model = "gemini-2.0-flash-exp"
             
-            # Initialize model
             gemini_model = genai.GenerativeModel(model)
-            
-            # Convert messages to Gemini format
             chat = gemini_model.start_chat(history=[])
             
-            # Process messages
             for msg in messages:
                 if msg["role"] == "user":
                     response = await asyncio.to_thread(
@@ -341,7 +342,6 @@ class GeminiProvider(BaseProvider):
                         msg["content"]
                     )
                 elif msg["role"] == "assistant":
-                    # Add assistant messages to history
                     chat.history.append({
                         "role": "model",
                         "parts": [msg["content"]]
@@ -354,7 +354,6 @@ class GeminiProvider(BaseProvider):
     
     async def generate_image(self, prompt: str, model: Optional[str] = None, **kwargs) -> str:
         try:
-            # Use Imagen via Gemini
             model_name = model or "imagen-3.0-generate-001"
             imagen = genai.ImageGenerationModel(model_name)
             
@@ -365,7 +364,6 @@ class GeminiProvider(BaseProvider):
                 aspect_ratio=kwargs.get("aspect_ratio", "1:1")
             )
             
-            # Save image and return URL or base64
             return response.images[0]._image_bytes
         except Exception as e:
             logger.error(f"Gemini image generation error: {e}")
@@ -452,28 +450,23 @@ class ProviderManager:
             logger.warning(f"Invalid {provider_name} API key: too short (length: {len(api_key)})")
             return False
         
-        # Skip pattern validation for now to be more permissive
-        # Most API key issues are due to overly strict regex patterns
         if pattern and not re.match(pattern, api_key):
             logger.warning(f"API key format warning for {provider_name} (pattern: {pattern})")
             logger.warning(f"Key format: {api_key[:15]}... (length: {len(api_key)})")
-            # Return True anyway - let the provider initialization handle validity
             logger.info(f"Proceeding with {provider_name} despite format warning")
         
         return True
     
     def _initialize_providers(self):
         """Initialize available providers based on API keys"""
-        # Always add free provider
         self.providers[ProviderType.FREE] = FreeProvider()
         logger.info("Initialized free provider")
         
-        # API key configurations: (env_var, provider_type, provider_class, validation_pattern)
         api_configs = [
-            ("OPENAI_KEY", ProviderType.OPENAI, OpenAIProvider, r'^sk-[a-zA-Z0-9]{20,}$'),  # More flexible OpenAI key format
-            ("CLAUDE_KEY", ProviderType.CLAUDE, ClaudeProvider, r'^sk-ant-[a-zA-Z0-9-]{50,}$'),  # More flexible Claude key
-            ("GEMINI_KEY", ProviderType.GEMINI, GeminiProvider, r'^[a-zA-Z0-9_-]{20,}$'),  # More flexible Gemini key
-            ("GROK_KEY", ProviderType.GROK, GrokProvider, r'^xai-[a-zA-Z0-9-]{20,}$')  # More flexible Grok key
+            ("OPENAI_KEY", ProviderType.OPENAI, OpenAIProvider, r'^sk-[a-zA-Z0-9]{20,}$'),
+            ("CLAUDE_KEY", ProviderType.CLAUDE, ClaudeProvider, r'^sk-ant-[a-zA-Z0-9-]{50,}$'),
+            ("GEMINI_KEY", ProviderType.GEMINI, GeminiProvider, r'^[a-zA-Z0-9_-]{20,}$'),
+            ("GROK_KEY", ProviderType.GROK, GrokProvider, r'^xai-[a-zA-Z0-9-]{20,}$')
         ]
         
         for env_key, provider_type, provider_class, pattern in api_configs:
@@ -483,11 +476,11 @@ class ProviderManager:
                 if self._validate_api_key(api_key, provider_type.value, pattern):
                     try:
                         self.providers[provider_type] = provider_class(api_key)
-                        logger.info(f"✅ Successfully initialized {provider_type.value} provider")
+                        logger.info(f"Successfully initialized {provider_type.value} provider")
                     except Exception as e:
-                        logger.error(f"❌ Failed to initialize {provider_type.value}: {e}")
+                        logger.error(f"Failed to initialize {provider_type.value}: {e}")
                 else:
-                    logger.warning(f"❌ Skipping {provider_type.value} due to invalid API key format")
+                    logger.warning(f"Skipping {provider_type.value} due to invalid API key format")
             else:
                 logger.debug(f"No {env_key} provided - {provider_type.value} provider disabled")
     
